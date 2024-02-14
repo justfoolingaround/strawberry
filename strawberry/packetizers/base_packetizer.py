@@ -47,9 +47,10 @@ class BaseMediaPacketizer:
         if is_last:
             header[1] |= 0b10000000
 
-        return struct.pack_into(
-            ">HII", header, 2, self.get_new_sequence(), self.timestamp, self.ssc
+        struct.pack_into(
+            ">HII", header, 2, self.get_new_sequence(), self.timestamp, self.ssrc
         )
+        return header
 
     def get_header_extension(self):
         profile = bytearray(4)
