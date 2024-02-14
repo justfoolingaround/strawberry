@@ -1,0 +1,9 @@
+[user]
+token = "..."
+
+[voice]
+guild_id = "..."
+channel_id = "..."
+
+# Optional
+preferred_region = ""
