@@ -9,6 +9,9 @@ from strawberry.streamer import stream
 with open("strawberry_config.toml") as f:
     config = toml.load(f)
 
+with open("assets/strawberry_preview.png", "rb") as f:
+    thumbnail = f.read()
+
 
 async def main():
     stream_what = sys.argv[1]
@@ -31,6 +34,7 @@ async def main():
         stream_conn,
         stream_what,
     )
+    await stream_conn.set_preview(gateway_ws, thumbnail, "image/png")
     # Do something with the threads
     await gateway_ws.wait()
 
