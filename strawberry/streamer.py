@@ -81,7 +81,7 @@ async def stream(
             True,
             width,
             height,
-            int(fps),
+            round(fps),
         )
 
         video_source = VideoSource(
