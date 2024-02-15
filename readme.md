@@ -15,9 +15,9 @@
 
 ```sh
 # Configure the strawberry_config.toml first and then.
-$ py strawberry_yum.py "?" "{file path or url to stream}"
+$ py strawberry_yum.py "{file path or url to stream}"
 # or just stream via yt-dlp
-$ py strawberry_yum.py "yt-dlp" "{yt-dlp supported url to stream}"
+$ py strawberry_yum.py "{yt-dlp supported url to stream}" --yt-dlp
 ```
 
 

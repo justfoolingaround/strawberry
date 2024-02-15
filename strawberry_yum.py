@@ -48,7 +48,14 @@ def invoke_ytdlp(query: str):
 
 
 async def main():
-    stream_with, stream_what = sys.argv[1:]
+    args_copy = sys.argv.copy()
+
+    stream_with_ytdlp = "--yt-dlp" in args_copy
+
+    if stream_with_ytdlp:
+        args_copy.remove("--yt-dlp")
+
+    stream_what = sys.argv[1]
 
     guild_id, channel_id, region = (
         config["voice"]["guild_id"],
@@ -60,7 +67,7 @@ async def main():
         config["user"]["token"],
     )
 
-    if stream_with == "yt-dlp":
+    if stream_with_ytdlp:
         media = invoke_ytdlp(stream_what)
 
         if media is None:
