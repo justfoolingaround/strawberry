@@ -69,4 +69,4 @@ class H264Packetizer(BaseMediaPacketizer):
                         )
                     )
 
-        self.increment_timestamp(90000 / self.fps)
+        self.increment_timestamp(1000 / self.fps)
