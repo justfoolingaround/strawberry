@@ -111,7 +111,6 @@ async def stream(
         if audio_source is not None:
             asrc = AudioSource(audio_source)
         else:
-            print(has_audio)
             asrc = AudioSource(source, duration=float(duration) if duration else None)
 
         audio_thread = threading.Thread(
