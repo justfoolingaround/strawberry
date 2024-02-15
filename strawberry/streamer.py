@@ -75,6 +75,7 @@ async def stream(
         height = forced_height or int(max_video_res["height"])
 
         fps = ffmpeg_fps_eval(max_video_res["avg_frame_rate"])
+        duration = max_video_res["duration"]
 
         await conn.set_video_state(
             True,
@@ -88,6 +89,7 @@ async def stream(
             has_burned_in_subtitles=bool(probes["subtitle"]),
             width=width,
             height=height,
+            duration=float(duration) if duration else None,
         )
         conn.udp_connection.video_packetizer.fps = fps
 
@@ -109,7 +111,7 @@ async def stream(
         if audio_source is not None:
             asrc = AudioSource(audio_source)
         else:
-            asrc = AudioSource(source)
+            asrc = AudioSource(source, duration=float(duration) if duration else None)
 
         audio_thread = threading.Thread(
             target=invoke_source_stream,

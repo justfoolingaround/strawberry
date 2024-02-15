@@ -64,8 +64,10 @@ class OggStream:
 class AudioSource:
     bitrate = 128
 
-    def __init__(self, source: "str | IO[bytes]"):
+    def __init__(self, source: "str | IO[bytes]", *, duration: "int | None" = None):
         self.input = source
+        self.duration = duration
+
         subprocess_kwargs = {
             "stdout": subprocess.PIPE,
         }

@@ -13,7 +13,7 @@ def try_probe_source(source: str):
             "-v",
             "error",
             "-show_entries",
-            "stream=width,height,avg_frame_rate,codec_type",
+            "stream=width,height,avg_frame_rate,duration,codec_type",
             "-of",
             "default=noprint_wrappers=1",
             source,
@@ -55,7 +55,7 @@ def try_probe_source(source: str):
                     curr_probe = None
         else:
             if curr_probe is not None:
-                curr_probe[key] = value
+                curr_probe[key] = value if value != "N/A" else None
 
     return {
         "video": video_probes,

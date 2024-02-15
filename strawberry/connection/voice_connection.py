@@ -77,7 +77,7 @@ class VoiceConnection:
         channel_id: int,
         session_id: str,
         *,
-        encryption_mode: str = "xsalsa20_poly1305_lite",
+        encryption_mode: str = "xsalsa20_poly1305",
         audio_packetizer=audio_packetizer.AudioPacketizer,
         video_packetizer=h264_packetizer.H264Packetizer,
     ):
@@ -113,7 +113,6 @@ class VoiceConnection:
         self.ssrc: typing.Optional[int] = None
         self.video_ssrc: typing.Optional[int] = None
         self.rtx_ssrc: typing.Optional[int] = None
-        self.modes = []
 
         self.secret_key: typing.Optional[str] = None
         self.ws_handler_task: typing.Optional[asyncio.Task] = None
@@ -221,8 +220,6 @@ class VoiceConnection:
                 case VoiceOpCodes.READY:
                     self.set_ssrc(data["ssrc"])
                     self.set_server_address(data["ip"], data["port"])
-
-                    self.modes = data["modes"]
 
                     self.udp_connection.create_udp_socket()
                     await self.set_video_state(False)
@@ -411,7 +408,7 @@ class UDPConnection:
     def encrypt_data_xsalsa20_poly1305(self, header: bytes, data) -> bytes:
         box = nacl.secret.SecretBox(bytes(self.conn.secret_key))
         nonce = bytearray(24)
-        nonce[:12] = header
+        nonce[: len(header)] = header
 
         return header + box.encrypt(bytes(data), bytes(nonce)).ciphertext
 

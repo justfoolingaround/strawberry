@@ -104,7 +104,10 @@ class VideoSource:
         *,
         framerate: "int | None" = None,
         crf: "int | None" = None,
+        duration: "int | None" = None,
     ):
+        self.duration = duration
+
         self.input = source
         subprocess_kwargs = {
             "stdout": subprocess.PIPE,
