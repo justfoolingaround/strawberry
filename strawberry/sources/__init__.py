@@ -13,7 +13,7 @@ def try_probe_source(source: str):
             "-v",
             "error",
             "-show_entries",
-            "stream=width,height,avg_frame_rate,duration,codec_type",
+            "stream=width,height,avg_frame_rate,duration,codec_type,bit_rate",
             "-of",
             "default=noprint_wrappers=1",
             source,
