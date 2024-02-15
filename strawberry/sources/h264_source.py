@@ -102,7 +102,7 @@ class VideoSource:
         height: int = 720,
         has_burned_in_subtitles: bool = False,
         *,
-        framerate: "int | None" = 24,
+        framerate: "int | None" = None,
         crf: "int | None" = None,
     ):
         self.input = source
@@ -156,6 +156,8 @@ class VideoSource:
             "-an",
             "-loglevel",
             "warning",
+            "-hls_time",
+            "10",
             "pipe:1",
         )
 

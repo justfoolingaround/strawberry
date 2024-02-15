@@ -39,18 +39,12 @@ class BaseMediaPacketizer:
         self.timestamp = checked_add(self.timestamp, int(increment), self.MAX_INT_32)
 
     def get_rtp_header(self, is_last: bool = True):
-        header = bytearray(12)
-
-        header[0] = 2 << 6 | (int(self.extensions_enabled) << 4)
-        header[1] = self.payload_type
-
-        if is_last:
-            header[1] |= 0b10000000
-
-        struct.pack_into(
-            ">HII", header, 2, self.get_new_sequence(), self.timestamp, self.ssrc
-        )
-        return header
+        return bytearray(
+            (
+                0x80 | (0x10 if self.extensions_enabled else 0x00),
+                self.payload_type | (0x80 if is_last else 0x00),
+            )
+        ) + struct.pack(">HII", self.get_new_sequence(), self.timestamp, self.ssrc)
 
     def get_header_extension(self):
         profile = bytearray(4)

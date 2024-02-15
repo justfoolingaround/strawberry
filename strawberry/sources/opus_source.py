@@ -98,6 +98,8 @@ class AudioSource:
             "-vn",
             "-loglevel",
             "warning",
+            "-hls_time",
+            "10",
             "pipe:1",
         )
 

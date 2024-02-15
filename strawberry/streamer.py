@@ -22,9 +22,12 @@ def invoke_source_stream(
         logger = logger.getChild("video")
 
     paused_duration = 0
-    start = time.perf_counter()
+    start = None
 
     for loops, packet in enumerate(source.iter_packets(), 1):
+        if start is None:
+            start = time.perf_counter()
+
         if pause_event is not None and pause_event.is_set():
             paused_start = time.perf_counter()
             pause_event.wait()
@@ -83,7 +86,6 @@ async def stream(
         video_source = VideoSource(
             source,
             has_burned_in_subtitles=bool(probes["subtitle"]),
-            framerate=fps,
             width=width,
             height=height,
         )
