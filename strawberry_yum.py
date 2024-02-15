@@ -48,7 +48,7 @@ def invoke_ytdlp(query: str):
 
 
 async def main():
-    stream_what = sys.argv[1]
+    stream_with, stream_what = sys.argv[1:]
 
     guild_id, channel_id, region = (
         config["voice"]["guild_id"],
@@ -60,22 +60,27 @@ async def main():
         config["user"]["token"],
     )
 
-    media = invoke_ytdlp(stream_what)
+    if stream_with == "yt-dlp":
+        media = invoke_ytdlp(stream_what)
 
-    if media is None:
+        if media is None:
+            kwargs = {
+                "source": stream_what,
+            }
+        else:
+            if "audio" in media:
+                kwargs = {
+                    "source": media["video"],
+                    "audio_source": media["audio"],
+                }
+            else:
+                kwargs = {
+                    "source": media["video"],
+                }
+    else:
         kwargs = {
             "source": stream_what,
         }
-    else:
-        if "audio" in media:
-            kwargs = {
-                "source": media["video"],
-                "audio_source": media["audio"],
-            }
-        else:
-            kwargs = {
-                "source": media["video"],
-            }
 
     await gateway_ws.ws_connect()
     conn = await gateway_ws.join_voice_channel(guild_id, channel_id, region or None)
