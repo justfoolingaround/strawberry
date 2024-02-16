@@ -1,9 +1,105 @@
 import subprocess
+import typing
 
 from .h264_source import VideoSource
 from .opus_source import AudioSource
 
-__all__ = ["VideoSource", "AudioSource", "try_probe_source"]
+if typing.TYPE_CHECKING:
+    pass
+
+__all__ = [
+    "VideoSource",
+    "AudioSource",
+    "try_probe_source",
+    "create_av_sources_from_single_process",
+]
+
+
+def create_av_sources_from_single_process(
+    source: str,
+    width: int = 1280,
+    height: int = 720,
+    has_burned_in_subtitles: bool = False,
+    *,
+    framerate: "int | None" = None,
+    crf: "int | None" = None,
+    audio_source: "str | None" = None,
+):
+    subprocess_kwargs = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+    }
+
+    args = ("ffmpeg", "-hide_banner", "-loglevel", "quiet", "-i", source)
+
+    if crf is not None:
+        args += ("-crf", str(crf))
+
+    if framerate is not None:
+        args += ("-r", str(framerate))
+
+    vf = f"scale={width}:{height}"
+
+    if has_burned_in_subtitles:
+        escaped_source = source.replace(":", "\\:").replace("'", "\\'")
+
+        vf += ",subtitles=" + f"'{escaped_source}'" + ":si=0"
+
+    args += (
+        "-f",
+        "h264",
+        "-reconnect",
+        "1",
+        "-reconnect_streamed",
+        "1",
+        "-reconnect_delay_max",
+        "5",
+        "-vf",
+        vf,
+        "-tune",
+        "zerolatency",
+        "-pix_fmt",
+        "yuv420p",
+        "-preset",
+        "ultrafast",
+        "-profile:v",
+        "baseline",
+        "-bsf:v",
+        "h264_metadata=aud=insert",
+        "pipe:1",
+    )
+
+    if audio_source is not None:
+        args += (
+            "-i",
+            audio_source,
+        )
+
+    args += (
+        "-map_metadata",
+        "-1",
+        "-reconnect",
+        "1",
+        "-reconnect_streamed",
+        "1",
+        "-reconnect_delay_max",
+        "5",
+        "-f",
+        "opus",
+        "-c:a",
+        "libopus",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-b:a",
+        f"{AudioSource.bitrate}k",
+        "pipe:2",
+    )
+
+    process = subprocess.Popen(args, **subprocess_kwargs)
+
+    return VideoSource(process.stdout), AudioSource(process.stderr)
 
 
 def try_probe_source(source: str):
@@ -24,9 +120,7 @@ def try_probe_source(source: str):
 
     stdout, stderr = ffprobe.communicate()
 
-    if stderr:
-        raise ValueError(stderr.decode("utf-8"))
-
+    assert ffprobe.returncode == 0, stderr.decode("utf-8")
     stdout_text = stdout.decode("utf-8")
 
     video_probes = []

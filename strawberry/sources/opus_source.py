@@ -64,10 +64,17 @@ class OggStream:
 class AudioSource:
     bitrate = 128
 
-    def __init__(self, source: "str | IO[bytes]", *, duration: "int | None" = None):
-        self.input = source
-        self.duration = duration
+    def __init__(self, source: "IO[bytes]"):
+        self.packet_iter = OggStream(source)
 
+    def iter_packets(self):
+        yield from self.packet_iter
+
+    @classmethod
+    def from_source(
+        cls,
+        source: "str | IO[bytes]",
+    ):
         subprocess_kwargs = {
             "stdout": subprocess.PIPE,
         }
@@ -96,18 +103,13 @@ class AudioSource:
             "-ac",
             "2",
             "-b:a",
-            f"{self.bitrate}k",
+            f"{AudioSource.bitrate}k",
             "-vn",
             "-loglevel",
             "warning",
-            "-hls_time",
-            "10",
             "pipe:1",
         )
 
-        self.process = subprocess.Popen(args, **subprocess_kwargs)
+        process = subprocess.Popen(args, **subprocess_kwargs)
 
-        self.packet_iter = OggStream(self.process.stdout)
-
-    def iter_packets(self):
-        yield from self.packet_iter
+        return cls(process.stdout)

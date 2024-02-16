@@ -3,7 +3,12 @@ import threading
 import time
 
 from .connection import StreamConnection, UDPConnection, VoiceConnection
-from .sources import AudioSource, VideoSource, try_probe_source
+from .sources import (
+    AudioSource,
+    VideoSource,
+    create_av_sources_from_single_process,
+    try_probe_source,
+)
 
 
 def invoke_source_stream(
@@ -49,8 +54,12 @@ def invoke_source_stream(
 
 
 def ffmpeg_fps_eval(fps: str) -> int:
-    numerator, denominator = fps.split("/", 1)
-    return int(numerator) / (int(denominator) or 1)
+    numerator, denominator = map(int, fps.split("/", 1))
+
+    if denominator == 0:
+        return None
+
+    return numerator / denominator
 
 
 async def stream(
@@ -62,9 +71,13 @@ async def stream(
     forced_height: int = 0,
     pause_event: "threading.Event | None" = None,
 ):
-    t: list[threading.Thread] = []
-
     probes = try_probe_source(source)
+
+    has_audio_in_source = probes["audio"]
+    has_audio = audio_source or has_audio_in_source
+
+    sources = []
+    is_udp_source = source[:6] == "udp://"
 
     if probes["video"]:
         max_video_res = max(
@@ -74,8 +87,7 @@ async def stream(
         width = forced_width or int(max_video_res["width"])
         height = forced_height or int(max_video_res["height"])
 
-        fps = ffmpeg_fps_eval(max_video_res["avg_frame_rate"])
-        duration = max_video_res["duration"]
+        fps = ffmpeg_fps_eval(max_video_res["avg_frame_rate"]) or 30
 
         await conn.set_video_state(
             True,
@@ -83,43 +95,80 @@ async def stream(
             height,
             round(fps),
         )
-
-        video_source = VideoSource(
-            source,
-            has_burned_in_subtitles=bool(probes["subtitle"]),
-            width=width,
-            height=height,
-            duration=float(duration) if duration else None,
-        )
         conn.udp_connection.video_packetizer.fps = fps
 
-        video_thread = threading.Thread(
-            target=invoke_source_stream,
-            args=(video_source, conn.udp_connection, 1 / fps, pause_event),
-        )
+        if has_audio_in_source and is_udp_source:
+            # You can only open 1 udp server at a time.
+            # For some reason the stderr source has serious
+            # latency (>1s).
+            video, audio = create_av_sources_from_single_process(
+                source,
+                has_burned_in_subtitles=bool(probes["subtitle"]),
+                width=width,
+                height=height,
+                audio_source=audio_source,
+            )
+
+            sources.extend(
+                (
+                    (
+                        video,
+                        1 / fps,
+                    ),
+                    (
+                        audio,
+                        20 / 1000,
+                    ),
+                )
+            )
+        else:
+            sources.append(
+                (
+                    VideoSource.from_source(
+                        source,
+                        has_burned_in_subtitles=bool(probes["subtitle"]),
+                        width=width,
+                        height=height,
+                    ),
+                    1 / fps,
+                )
+            )
+
     else:
         await conn.set_video_state(False)
 
         if isinstance(source, StreamConnection):
             raise ValueError("StreamConnection requires a video source")
 
-    t.append(video_thread)
-
-    has_audio = audio_source or probes["audio"]
-
-    if audio_source is not None or has_audio:
+    if not (has_audio_in_source and is_udp_source) and (
+        audio_source is not None or has_audio
+    ):
         if audio_source is not None:
-            asrc = AudioSource(audio_source)
+            asrc = AudioSource.from_source(audio_source)
         else:
-            asrc = AudioSource(source, duration=float(duration) if duration else None)
+            asrc = AudioSource.from_source(source)
 
-        audio_thread = threading.Thread(
-            target=invoke_source_stream,
-            args=(asrc, conn.udp_connection, 20 / 1000, pause_event),
+        sources.append(
+            (
+                asrc,
+                20 / 1000,
+            )
         )
-        t.append(audio_thread)
 
-    for thread in t:
+    threads = [
+        threading.Thread(
+            target=invoke_source_stream,
+            args=(
+                src,
+                conn.udp_connection,
+                delay,
+                pause_event,
+            ),
+        )
+        for src, delay in sources
+    ]
+
+    for thread in threads:
         thread.start()
 
-    return t
+    return threads

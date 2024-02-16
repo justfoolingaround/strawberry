@@ -97,6 +97,20 @@ class H264NalPacketIterator:
 class VideoSource:
     def __init__(
         self,
+        input_stream: "io.BufferedIOBase",
+    ):
+        self.input = input_stream
+
+        self.packet_iter = H264NalPacketIterator()
+
+    def iter_packets(self):
+        for chunk in iter(lambda: self.input.read(1024 * 16), b""):
+            for packet in self.packet_iter.iter_packets(chunk):
+                yield packet
+
+    @classmethod
+    def from_source(
+        cls,
         source: "str | io.BufferedIOBase",
         width: int = 1280,
         height: int = 720,
@@ -104,11 +118,7 @@ class VideoSource:
         *,
         framerate: "int | None" = None,
         crf: "int | None" = None,
-        duration: "int | None" = None,
     ):
-        self.duration = duration
-
-        self.input = source
         subprocess_kwargs = {
             "stdout": subprocess.PIPE,
         }
@@ -159,16 +169,9 @@ class VideoSource:
             "-an",
             "-loglevel",
             "warning",
-            "-hls_time",
-            "10",
             "pipe:1",
         )
 
-        self.process = subprocess.Popen(args, **subprocess_kwargs)
+        process = subprocess.Popen(args, **subprocess_kwargs)
 
-        self.packet_iter = H264NalPacketIterator()
-
-    def iter_packets(self):
-        for chunk in iter(lambda: self.process.stdout.read(1024 * 16), b""):
-            for packet in self.packet_iter.iter_packets(chunk):
-                yield packet
+        return cls(process.stdout)
