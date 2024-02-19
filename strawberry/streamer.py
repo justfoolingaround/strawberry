@@ -87,7 +87,7 @@ async def stream(
         width = forced_width or int(max_video_res["width"])
         height = forced_height or int(max_video_res["height"])
 
-        fps = ffmpeg_fps_eval(max_video_res["avg_frame_rate"]) or 30
+        fps = ffmpeg_fps_eval(max_video_res["avg_frame_rate"]) or 60
 
         await conn.set_video_state(
             True,
