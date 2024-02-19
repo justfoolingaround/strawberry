@@ -2,6 +2,8 @@
 token = "..."
 
 [voice]
+
+# Comment out the guild part if the channel is a dm channel.
 guild_id = "..."
 channel_id = "..."
 
