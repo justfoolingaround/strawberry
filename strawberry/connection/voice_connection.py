@@ -72,11 +72,13 @@ class VoiceConnection:
     def __init__(
         self,
         session: aiohttp.ClientSession,
-        guild_id: int,
-        user_id: int,
-        channel_id: int,
-        session_id: str,
         *,
+        channel_id: str,
+        user_id: str,
+        session_id: str,
+        endpoint: str,
+        token: str,
+        guild_id: "str | None" = None,
         encryption_mode: str = "xsalsa20_poly1305",
         audio_packetizer=audio_packetizer.AudioPacketizer,
         video_packetizer=h264_packetizer.H264Packetizer,
@@ -94,15 +96,16 @@ class VoiceConnection:
         )
 
         self.guild_id = guild_id
-        self.user_id = user_id
         self.channel_id = channel_id
-        self.session_id = session_id
 
-        self.server_id: typing.Optional[str] = None
+        self.server_id = self.guild_id or self.channel_id
+
+        self.user_id = user_id
+        self.session_id = session_id
+        self.endpoint = endpoint
+        self.token = token
 
         self.ws: typing.Optional[aiohttp.ClientWebSocketResponse] = None
-        self.endpoint: typing.Optional[str] = None
-        self.token: typing.Optional[str] = None
 
         self.our_ip: typing.Optional[str] = None
         self.our_port: typing.Optional[int] = None
@@ -139,17 +142,9 @@ class VoiceConnection:
 
         self.udp_connection.set_ssrc(self.ssrc, self.video_ssrc)
 
-    def prepare(self, server: str, token: str):
-        self.endpoint = server
-        self.token = token
-
     @property
     def is_ready(self):
         return all((self.endpoint, self.token, self.ip, self.port, self.ssrc))
-
-    @property
-    def is_prepared(self):
-        return self.endpoint is not None and self.token is not None
 
     def ensure_ready(self):
         if not self.is_ready:
@@ -304,8 +299,6 @@ class VoiceConnection:
         Start the SVC websocket connection and wait until
         the internal UDP connection receives protocol acknowledgement.
         """
-        if not self.is_prepared:
-            raise RuntimeError("Media connection has not yet been prepared.")
 
         if self.is_ready:
             raise RuntimeError("Media connection has already started.")
@@ -314,11 +307,26 @@ class VoiceConnection:
             f"wss://{self.endpoint}/", params={"v": 7}
         )
         # Do resume here in the future if it is that crucial.
+
+        print(
+            {
+                "op": VoiceOpCodes.IDENTIFY,
+                "d": {
+                    "server_id": self.server_id or self.guild_id or self.channel_id,
+                    "user_id": self.user_id,
+                    "session_id": self.session_id,
+                    "token": self.token,
+                    "video": True,
+                    "streams": [{"type": "screen", "rid": "100", "quality": 100}],
+                },
+            }
+        )
+
         await self.ws.send_json(
             {
                 "op": VoiceOpCodes.IDENTIFY,
                 "d": {
-                    "server_id": self.server_id or self.guild_id,
+                    "server_id": self.server_id or self.guild_id or self.channel_id,
                     "user_id": self.user_id,
                     "session_id": self.session_id,
                     "token": self.token,

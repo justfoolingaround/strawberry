@@ -32,11 +32,12 @@ if typing.TYPE_CHECKING:
 
 
 class StreamConnection(VoiceConnection):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, stream_key: str, rtc_server_id: str, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.logger = self.logger.getChild("stream")
-        self.stream_key: typing.Optional[str] = None
+        self.stream_key = stream_key
+        self.server_id = rtc_server_id
 
     async def set_speaking(self, speaking: bool):
         self.ensure_ready()
@@ -70,3 +71,25 @@ class StreamConnection(VoiceConnection):
             },
         ) as response:
             return response.status == 204
+
+    @classmethod
+    def from_voice_connection(
+        cls,
+        voice_conn: VoiceConnection,
+        *,
+        stream_key: str,
+        rtc_server_id: str,
+        rtc_server_endpoint: str,
+        rtc_server_token: str,
+    ):
+        return cls(
+            voice_conn.session,
+            channel_id=voice_conn.channel_id,
+            user_id=voice_conn.user_id,
+            session_id=voice_conn.session_id,
+            guild_id=voice_conn.guild_id,
+            stream_key=stream_key,
+            endpoint=rtc_server_endpoint,
+            token=rtc_server_token,
+            rtc_server_id=rtc_server_id,
+        )
