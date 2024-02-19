@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import enum
 
 import aiohttp
@@ -51,15 +52,20 @@ class DiscordGateway:
 
     GATEWAY_VERSION = 9
 
-    def __init__(self, token, *, session=None):
+    def __init__(self, token: str, *, session=None):
         self.loop = asyncio.get_event_loop()
 
+        if token[:4] == "Bot ":
+            raise ValueError("Invalid token: Bot tokens are not supported.")
+
+        uid_payload, _ = token.split(".", 1)
+
         self.token = token
+
         self.session = session or aiohttp.ClientSession()
-        self.user_id = None
+        self.user_id = base64.b64decode(uid_payload + "===").decode("utf-8")
 
         self.sequence = None
-
         self.ws_handler_task = None
 
         self.interceptors = []
@@ -73,7 +79,7 @@ class DiscordGateway:
         self.latency = 0
         self.last_heartbeat_sent = 0
 
-    async def join_voice_channel(self, guild_id, channel_id, region=None):
+    async def join_voice_channel(self, channel_id: str, guild_id=None, region=None):
         await self.ws.send_json(
             {
                 "op": DiscordGatewayOPCodes.VOICE_STATE_UPDATE,
@@ -91,7 +97,6 @@ class DiscordGateway:
         state_update, server_update = await self.create_ws_interceptor(
             (
                 lambda data: data["t"] == "VOICE_STATE_UPDATE"
-                and data["d"]["guild_id"] == guild_id
                 and data["d"]["channel_id"] == channel_id
                 and data["d"]["user_id"] == self.user_id
             ),
@@ -100,13 +105,14 @@ class DiscordGateway:
 
         voice_conn = VoiceConnection(
             self.session,
-            guild_id,
-            self.user_id,
-            channel_id,
-            state_update["d"]["session_id"],
+            guild_id=guild_id,
+            channel_id=channel_id,
+            user_id=self.user_id,
+            session_id=state_update["d"]["session_id"],
+            endpoint=server_update["d"]["endpoint"],
+            token=server_update["d"]["token"],
         )
 
-        voice_conn.prepare(server_update["d"]["endpoint"], server_update["d"]["token"])
         await voice_conn.start()
         return voice_conn
 
@@ -157,8 +163,7 @@ class DiscordGateway:
                 case DiscordGatewayOPCodes.DISPATCH:
                     match data["t"]:
                         case "READY":
-                            user = data["d"]["user"]
-                            self.user_id = user["id"]
+                            ...
 
                 case DiscordGatewayOPCodes.HEARTBEAT_ACK:
                     self.latency = (self.loop.time() - self.last_heartbeat_sent) * 1000
@@ -207,70 +212,57 @@ class DiscordGateway:
             }
         )
 
-    async def create_stream(self, voice_conn: VoiceConnection):
-        await self.ws.send_json(
-            {
-                "op": DiscordGatewayOPCodes.STREAM_CREATE,
-                "d": {
-                    "type": "guild",
-                    "guild_id": voice_conn.guild_id,
-                    "channel_id": voice_conn.channel_id,
-                    "preferred_region": None,
-                },
-            }
-        )
+    async def create_stream(self, voice_conn: VoiceConnection, preferred_region=None):
+        payload = {
+            "op": DiscordGatewayOPCodes.STREAM_CREATE,
+            "d": {
+                "type": "guild",
+                "guild_id": voice_conn.guild_id,
+                "channel_id": voice_conn.channel_id,
+                "preferred_region": preferred_region,
+            },
+        }
 
-        stream_key = (
-            f"guild:{voice_conn.guild_id}:{voice_conn.channel_id}:{self.user_id}"
-        )
-        await self.set_stream_pause(voice_conn, False)
+        if voice_conn.guild_id is None:
+            payload["d"]["type"] = "call"
+
+        await self.ws.send_json(payload)
 
         (
             stream_create_data,
             stream_server_update_data,
         ) = await self.create_ws_interceptor(
-            (
-                lambda data: data["t"] == "STREAM_CREATE"
-                and data["d"]["stream_key"] == stream_key
-            ),
+            (lambda data: data["t"] == "STREAM_CREATE"),
             (lambda data: data["t"] == "STREAM_SERVER_UPDATE"),
         )
 
-        stream_conn = StreamConnection(
-            self.session,
-            voice_conn.guild_id,
-            self.user_id,
-            voice_conn.channel_id,
-            voice_conn.session_id,
+        stream_conn = StreamConnection.from_voice_connection(
+            voice_conn,
+            stream_key=stream_create_data["d"]["stream_key"],
+            rtc_server_id=stream_create_data["d"]["rtc_server_id"],
+            rtc_server_endpoint=stream_server_update_data["d"]["endpoint"],
+            rtc_server_token=stream_server_update_data["d"]["token"],
         )
 
-        stream_conn.server_id = stream_create_data["d"]["rtc_server_id"]
-        stream_conn.stream_key = stream_key
-
-        stream_conn.prepare(
-            stream_server_update_data["d"]["endpoint"],
-            stream_server_update_data["d"]["token"],
-        )
+        await self.set_stream_pause(stream_conn, False)
         await stream_conn.start()
         return stream_conn
 
-    async def set_stream_pause(self, voice_conn: VoiceConnection, paused: bool):
+    async def set_stream_pause(self, stream_conn: StreamConnection, paused: bool):
         await self.ws.send_json(
             {
                 "op": DiscordGatewayOPCodes.STREAM_SET_PAUSED,
                 "d": {
-                    "stream_key": f"guild:{voice_conn.guild_id}:{voice_conn.channel_id}:{self.user_id}",
+                    "stream_key": stream_conn.stream_key,
                     "paused": paused,
                 },
             }
         )
 
-    async def delete_stream(self, voice_conn: VoiceConnection):
+    async def delete_stream(self, stream_conn: StreamConnection):
         await self.ws.send_json(
             {
                 "op": DiscordGatewayOPCodes.STREAM_DELETE,
-                "d": {
-                    "stream_key": f"guild:{voice_conn.guild_id}:{voice_conn.channel_id}:{self.user_id}"
-                },
+                "d": {"stream_key": stream_conn.stream_key},
             }
         )
