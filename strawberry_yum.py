@@ -32,7 +32,7 @@ def invoke_ytdlp(query: str):
     )
     stdout, stderr = proc.communicate()
 
-    if stderr:
+    if proc.returncode != 0 and stderr:
         raise ValueError(stderr.decode("utf-8"))
 
     streams = stdout.decode("utf-8").strip().split("\n")
@@ -58,7 +58,7 @@ async def main():
     stream_what = sys.argv[1]
 
     guild_id, channel_id, region = (
-        config["voice"]["guild_id"],
+        config["voice"].get("guild_id"),
         config["voice"]["channel_id"],
         config["voice"]["preferred_region"],
     )
@@ -90,12 +90,11 @@ async def main():
         }
 
     await gateway_ws.ws_connect()
-    conn = await gateway_ws.join_voice_channel(guild_id, channel_id, region or None)
-
+    conn = await gateway_ws.join_voice_channel(channel_id, guild_id, region or None)
     stream_conn = await gateway_ws.create_stream(conn)
     threads = await stream(stream_conn, **kwargs)
+    # # Do something with the threads
     await stream_conn.set_preview(gateway_ws, thumbnail, "image/png")
-    # Do something with the threads
     await gateway_ws.wait()
 
 
