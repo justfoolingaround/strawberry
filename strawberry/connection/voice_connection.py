@@ -79,7 +79,7 @@ class VoiceConnection:
         endpoint: str,
         token: str,
         guild_id: "str | None" = None,
-        encryption_mode: str = "xsalsa20_poly1305",
+        encryption_mode: str = "xsalsa20_poly1305_lite",
         audio_packetizer=audio_packetizer.AudioPacketizer,
         video_packetizer=h264_packetizer.H264Packetizer,
     ):
@@ -308,20 +308,6 @@ class VoiceConnection:
         )
         # Do resume here in the future if it is that crucial.
 
-        print(
-            {
-                "op": VoiceOpCodes.IDENTIFY,
-                "d": {
-                    "server_id": self.server_id or self.guild_id or self.channel_id,
-                    "user_id": self.user_id,
-                    "session_id": self.session_id,
-                    "token": self.token,
-                    "video": True,
-                    "streams": [{"type": "screen", "rid": "100", "quality": 100}],
-                },
-            }
-        )
-
         await self.ws.send_json(
             {
                 "op": VoiceOpCodes.IDENTIFY,
@@ -441,7 +427,7 @@ class UDPConnection:
         "xsalsa20_poly1305_lite": encrypt_data_xsalsa20_poly1305_lite,
     }
 
-    def encrypt_data(self, header: bytes, data) -> bytes:
+    def encrypt_data(self, header: bytes, data: bytes) -> bytes:
         if self.conn.encryption_mode not in self.encryptors:
             raise ValueError(
                 f"Unsupported encryption mode: {self.conn.encryption_mode}"

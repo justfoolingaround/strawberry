@@ -53,7 +53,7 @@ def invoke_source_stream(
         time.sleep(max(0, delay))
 
 
-def ffmpeg_fps_eval(fps: str) -> int:
+def ffmpeg_fps_eval(fps: str):
     numerator, denominator = map(int, fps.split("/", 1))
 
     if denominator == 0:
@@ -87,13 +87,13 @@ async def stream(
         width = forced_width or int(max_video_res["width"])
         height = forced_height or int(max_video_res["height"])
 
-        fps = ffmpeg_fps_eval(max_video_res["avg_frame_rate"]) or 60
+        fps = round(ffmpeg_fps_eval(max_video_res["avg_frame_rate"]) or 30)
 
         await conn.set_video_state(
             True,
             width,
             height,
-            round(fps),
+            fps,
         )
         conn.udp_connection.video_packetizer.fps = fps
 
@@ -107,6 +107,7 @@ async def stream(
                 width=width,
                 height=height,
                 audio_source=audio_source,
+                framerate=fps,
             )
 
             sources.extend(
@@ -129,6 +130,7 @@ async def stream(
                         has_burned_in_subtitles=bool(probes["subtitle"]),
                         width=width,
                         height=height,
+                        framerate=int(fps),
                     ),
                     1 / fps,
                 )
@@ -151,7 +153,7 @@ async def stream(
         sources.append(
             (
                 asrc,
-                20 / 1000,
+                1 / 50,
             )
         )
 

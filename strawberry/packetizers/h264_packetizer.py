@@ -1,4 +1,4 @@
-import struct
+import math
 import typing
 
 from strawberry.utils import partition_chunks
@@ -17,42 +17,30 @@ class H264Packetizer(BaseMediaPacketizer):
 
         self.fps = 30
 
-    def send_frame(self, frame: bytearray):
-        access_unit = frame
-        nalus: list[bytearray] = []
-
-        offset = 0
-
-        while offset < len(access_unit):
-            (nalu_size,) = struct.unpack_from(">I", access_unit, offset)
-            offset += 4
-
-            nalu = access_unit[offset : offset + nalu_size]
-            nalus.append(nalu)
-            offset += nalu_size
-
+    def send_frame(self, nalus: list[bytes]):
         for i, nalu in enumerate(nalus):
             is_last = i == len(nalus) - 1
-            nal0 = nalu[0]
 
             if len(nalu) <= self.mtu:
-                packet = self.conn.encrypt_data(
-                    self.get_rtp_header(is_last),
-                    bytearray(self.get_header_extension()) + nalu,
+                self.conn.send_packet(
+                    self.conn.encrypt_data(
+                        self.get_rtp_header(is_last),
+                        self.get_header_extension() + nalu,
+                    )
                 )
 
-                self.conn.send_packet(packet)
             else:
-                chunks = list(partition_chunks(nalu[1:], self.mtu - 12))
+                nal0 = nalu[0]
+                chunks_count = math.ceil((len(nalu) - 1) / self.mtu)
 
                 nal_type = nal0 & 0x1F
                 fnri = nal0 & 0xE0
 
                 default_header = bytes((0x1C | fnri,))
 
-                for j, chunk in enumerate(chunks):
+                for j, nal_fragment in enumerate(partition_chunks(nalu[1:], self.mtu)):
                     chunk_header = default_header
-                    is_final_chunk = j == len(chunks) - 1
+                    is_final_chunk = j == chunks_count - 1
 
                     if j == 0:
                         chunk_header += bytes((0x80 | nal_type,))
@@ -65,8 +53,8 @@ class H264Packetizer(BaseMediaPacketizer):
                     self.conn.send_packet(
                         self.conn.encrypt_data(
                             self.get_rtp_header(is_final_chunk and is_last),
-                            self.get_header_extension() + chunk_header + chunk,
+                            self.get_header_extension() + chunk_header + nal_fragment,
                         )
                     )
 
-        self.increment_timestamp(1000 / self.fps)
+        self.increment_timestamp(90000 / self.fps)

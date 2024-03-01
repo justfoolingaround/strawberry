@@ -1,4 +1,5 @@
 import enum
+import functools
 import io
 import struct
 import subprocess
@@ -26,72 +27,54 @@ class NalUnitTypes(enum.IntEnum):
     SubsetSPS = enum.auto()
 
 
-def get_raw_byte_sequence_payload(frame: bytearray):
-    raw = bytearray()
-    frame_copy = bytes(frame)
+@functools.lru_cache()
+def get_raw_byte_sequence_payload(frame: bytes):
+    raw = b""
 
-    epbs_pos = frame_copy.find(EPB_PREFIX)
+    while (epbs_pos := frame.find(EPB_PREFIX)) != -1:
+        size = 3
 
-    while epbs_pos != -1:
-        if frame_copy[epbs_pos + 3] <= 0x03:
-            size = 2
-        else:
-            size = 3
+        if frame[epbs_pos + 3] <= 0x03:
+            size -= 1
 
-        raw += frame_copy[: epbs_pos + size]
-        frame_copy = frame_copy[epbs_pos + 3 :]
+        raw += frame[: epbs_pos + size]
+        frame = frame[epbs_pos + 3 :]
 
-        epbs_pos = frame_copy.find(EPB_PREFIX)
-
-    return raw + frame_copy
-
-
-def find_start_of_nal(buf: bytearray):
-    pos = buf.find(NAL_SUFFIX)
-
-    if pos == -1:
-        return None
-
-    if buf[pos - 1] == 0:
-        return pos - 1, 4
-
-    return pos, 3
+    return raw + frame
 
 
 class H264NalPacketIterator:
     def __init__(self):
-        self.buffer = bytearray()
+        self.buffer = b""
         self.access_unit = []
 
-    def iter_packets(self, chunk: bytes):
-        chunk = self.buffer + chunk
+    def iter_access_units(self, chunk: bytes):
+        self.buffer += chunk
 
-        while nal_start := find_start_of_nal(chunk):
-            pos, length = nal_start
+        *frames, self.buffer = self.buffer.split(NAL_SUFFIX)
 
-            frame = chunk[:pos]
-            chunk = chunk[pos + length :]
+        for frame in frames:
+            if frame[-1] == 0:
+                frame = frame[:-1]
 
             if not frame:
-                return
+                continue
 
-            header = frame[0]
-            unit_type = header & 0x1F
+            unit_type = frame[0] & 0x1F
 
             if unit_type == NalUnitTypes.AccessUnitDelimiter:
                 if self.access_unit:
-                    yield b"".join(
-                        struct.pack(">I", len(nalu)) + nalu for nalu in self.access_unit
-                    )
-
+                    yield self.access_unit
                     self.access_unit.clear()
             else:
-                if unit_type == NalUnitTypes.SPS or unit_type == NalUnitTypes.SEI:
+                if unit_type in (NalUnitTypes.SPS, NalUnitTypes.SEI):
                     self.access_unit.append(get_raw_byte_sequence_payload(frame))
                 else:
                     self.access_unit.append(frame)
 
-        self.buffer = chunk
+    def iter_packets(self, chunk: bytes):
+        for access_unit in self.iter_access_units(chunk):
+            yield b"".join(struct.pack(">I", len(nalu)) + nalu for nalu in access_unit)
 
 
 class VideoSource:
@@ -104,9 +87,8 @@ class VideoSource:
         self.packet_iter = H264NalPacketIterator()
 
     def iter_packets(self):
-        for chunk in iter(lambda: self.input.read(1024 * 16), b""):
-            for packet in self.packet_iter.iter_packets(chunk):
-                yield packet
+        for chunk in iter(lambda: self.input.read(8192), b""):
+            yield from self.packet_iter.iter_access_units(chunk)
 
     @classmethod
     def from_source(
@@ -133,13 +115,22 @@ class VideoSource:
             args += ("-crf", str(crf))
 
         if framerate is not None:
-            args += ("-r", str(framerate))
+            args += (
+                "-r",
+                str(framerate),
+                "-x264opts",
+                f"keyint={framerate}:min-keyint={framerate}",
+                "-g",
+                str(framerate),
+            )
 
         vf = f"scale={width}:{height}"
 
         if has_burned_in_subtitles:
             if isinstance(source, str):
-                escaped_source = source.replace(":", "\\:").replace("'", "\\'")
+                escaped_source = (
+                    source.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+                )
 
                 vf += ",subtitles=" + f"'{escaped_source}'" + ":si=0"
             else:

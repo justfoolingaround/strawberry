@@ -39,7 +39,7 @@ class BaseMediaPacketizer:
         self.timestamp = checked_add(self.timestamp, int(increment), self.MAX_INT_32)
 
     def get_rtp_header(self, is_last: bool = True):
-        return bytearray(
+        return bytes(
             (
                 0x80 | (0x10 if self.extensions_enabled else 0x00),
                 self.payload_type | (0x80 if is_last else 0x00),
