@@ -1,6 +1,8 @@
 import asyncio
 import base64
+import contextlib
 import enum
+from typing import AsyncContextManager
 
 import aiohttp
 
@@ -52,34 +54,31 @@ class DiscordGateway:
 
     GATEWAY_VERSION = 9
 
-    def __init__(self, token: str, *, session=None):
+    def __init__(self, ws: aiohttp.ClientWebSocketResponse, user_id: str):
         self.loop = asyncio.get_event_loop()
 
-        if token[:4] == "Bot ":
-            raise ValueError("Invalid token: Bot tokens are not supported.")
-
-        uid_payload, _ = token.split(".", 1)
-
-        self.token = token
-
-        self.session = session or aiohttp.ClientSession()
-        self.user_id = base64.b64decode(uid_payload + "===").decode("utf-8")
-
         self.sequence = None
-        self.ws_handler_task = None
 
         self.interceptors = []
 
+        self.user_id = user_id
         self.voice_connection: asyncio.Future[VoiceConnection] = asyncio.Future()
         self.stream_connection: asyncio.Future[StreamConnection] = asyncio.Future()
 
         self.pending_joins = {}
-        self.ws = None
+        self.ws = ws
 
         self.latency = 0
         self.last_heartbeat_sent = 0
+        self.ws_handler_task = self.loop.create_task(self.handle_incoming())
 
-    async def join_voice_channel(self, channel_id: str, guild_id=None, region=None):
+    async def join_voice_channel(
+        self,
+        session: aiohttp.ClientSession,
+        channel_id: str,
+        guild_id=None,
+        region=None,
+    ):
         await self.ws.send_json(
             {
                 "op": DiscordGatewayOPCodes.VOICE_STATE_UPDATE,
@@ -96,15 +95,17 @@ class DiscordGateway:
 
         state_update, server_update = await self.create_ws_interceptor(
             (
-                lambda data: data["t"] == "VOICE_STATE_UPDATE"
-                and data["d"]["channel_id"] == channel_id
-                and data["d"]["user_id"] == self.user_id
+                lambda data: (
+                    data["t"] == "VOICE_STATE_UPDATE"
+                    and data["d"]["channel_id"] == channel_id
+                    and data["d"]["user_id"] == self.user_id
+                )
             ),
             (lambda data: data["t"] == "VOICE_SERVER_UPDATE"),
         )
 
         voice_conn = VoiceConnection(
-            self.session,
+            session,
             guild_id=guild_id,
             channel_id=channel_id,
             user_id=self.user_id,
@@ -145,8 +146,6 @@ class DiscordGateway:
         return await interception
 
     async def handle_incoming(self):
-        if self.ws is None:
-            return
 
         async for message in self.ws:
             data = message.json()
@@ -168,33 +167,9 @@ class DiscordGateway:
                 case DiscordGatewayOPCodes.HEARTBEAT_ACK:
                     self.latency = (self.loop.time() - self.last_heartbeat_sent) * 1000
 
-    async def ws_connect(self):
-        async with self.session.get(f"{self.DISCORD_API_ENDPOINT}/gateway") as response:
-            gateway_endpoint = (await response.json())["url"]
-
-        self.ws = await self.session.ws_connect(
-            gateway_endpoint,
-            params={
-                "v": self.GATEWAY_VERSION,
-                "encoding": "json",
-            },
-        )
-        self.ws_handler_task = self.loop.create_task(self.handle_incoming())
-
-        await self.ws.send_json(
-            {
-                "op": DiscordGatewayOPCodes.IDENTIFY,
-                "d": {
-                    "token": self.token,
-                    "capabilities": voice_capabilities,
-                    "properties": {},
-                    "compress": False,
-                },
-            }
-        )
-
     async def wait(self):
-        await self.ws_handler_task
+        if self.ws_handler_task is not None:
+            await self.ws_handler_task
 
     async def update_voice_state(self, muted=False, deafened=False, video=False):
         voice_conn = await self.voice_connection
@@ -266,3 +241,46 @@ class DiscordGateway:
                 "d": {"stream_key": stream_conn.stream_key},
             }
         )
+
+
+@contextlib.asynccontextmanager
+async def create_gateway_connection(
+    session: aiohttp.ClientSession, token: str, *, gateway: str | None = None
+):
+    if gateway is None:
+        async with session.get(
+            f"{DiscordGateway.DISCORD_API_ENDPOINT}/gateway"
+        ) as response:
+            url = (await response.json())["url"]
+    else:
+        url = gateway
+
+    if token[:4] == "Bot ":
+        raise ValueError("Invalid token: Bot tokens are not supported.")
+
+    ws = await session.ws_connect(
+        url,
+        params={
+            "v": str(DiscordGateway.GATEWAY_VERSION),
+            "encoding": "json",
+        },
+    )
+
+    uid_payload, _ = token.split(".", 1)
+    user_id = base64.b64decode(uid_payload + "===").decode("utf-8")
+
+    await ws.send_json(
+        {
+            "op": DiscordGatewayOPCodes.IDENTIFY,
+            "d": {
+                "token": token,
+                "capabilities": voice_capabilities,
+                "properties": {},
+                "compress": False,
+            },
+        }
+    )
+    try:
+        yield DiscordGateway(ws, user_id)
+    finally:
+        await ws.close()

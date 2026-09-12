@@ -1,15 +1,20 @@
 import asyncio
+import logging
 import shutil
 import subprocess
 import sys
 
+import aiohttp
 import toml
 
-from strawberry.gateway import DiscordGateway
+from strawberry.config_model import Configuration
+from strawberry.gateway import DiscordGateway, create_gateway_connection
 from strawberry.streamer import stream
 
+logging.basicConfig(level=0)
+
 with open("strawberry_config.toml") as f:
-    config = toml.load(f)
+    config = Configuration.model_validate(toml.load(f))
 
 with open("assets/strawberry_preview.png", "rb") as f:
     thumbnail = f.read()
@@ -57,45 +62,28 @@ async def main():
 
     stream_what = sys.argv[1]
 
-    guild_id, channel_id, region = (
-        config["voice"].get("guild_id"),
-        config["voice"]["channel_id"],
-        config["voice"]["preferred_region"],
-    )
+    session = aiohttp.ClientSession()
+    async with create_gateway_connection(session, config.user.token) as gateway_ws:
+        audio_src, video_src = None, stream_what
 
-    gateway_ws = DiscordGateway(
-        config["user"]["token"],
-    )
+        if stream_with_ytdlp:
+            media = invoke_ytdlp(stream_what)
+            if media is not None:
+                video_src = media["video"]
+                if "audio" in media:
+                    audio_src = media["audio"]
 
-    if stream_with_ytdlp:
-        media = invoke_ytdlp(stream_what)
+        conn = await gateway_ws.join_voice_channel(
+            session,
+            config.voice.channel_id,
+            config.voice.guild_id,
+            config.voice.preferred_region,
+        )
 
-        if media is None:
-            kwargs = {
-                "source": stream_what,
-            }
-        else:
-            if "audio" in media:
-                kwargs = {
-                    "source": media["video"],
-                    "audio_source": media["audio"],
-                }
-            else:
-                kwargs = {
-                    "source": media["video"],
-                }
-    else:
-        kwargs = {
-            "source": stream_what,
-        }
-
-    await gateway_ws.ws_connect()
-    conn = await gateway_ws.join_voice_channel(channel_id, guild_id, region or None)
-    stream_conn = await gateway_ws.create_stream(conn)
-    threads = await stream(stream_conn, **kwargs)
-    # # Do something with the threads
-    await stream_conn.set_preview(gateway_ws, thumbnail, "image/png")
-    await gateway_ws.wait()
+        stream_conn = await gateway_ws.create_stream(conn)
+        _threads = await stream(stream_conn, source=video_src, audio_source=audio_src)
+        await stream_conn.set_preview(gateway_ws, thumbnail, "image/png")
+        await gateway_ws.wait()
 
 
 asyncio.run(main())
