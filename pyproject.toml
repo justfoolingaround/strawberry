@@ -9,11 +9,45 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp==3.9.0",
+    # In-process video encode/decode. Optional at runtime: the ffmpeg source
+    # is the fallback and --no-pyav forces it, so a build without av still
+    # works. It is ~1.8x the ffmpeg CLI's encode throughput at 1080p.
+    "av>=13.0.0",
+    "click>=8.5.0",
+    "davey>=0.1.6",
     "pydantic>=2.13.5",
-    "pynacl==1.3.0",
+    "pynacl>=1.5.0",
     "toml==0.10.2",
+    "uvloop>=0.23.0",
 ]
 
 [build-system]
 requires = ["uv_build>=0.9.11,<0.10.0"]
 build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "RUF"]
+
+[tool.pytest.ini_options]
+# the gateway and streamer tests are `async def`; without this pytest reports
+# them as failures instead of running them
+asyncio_mode = "auto"
+
+[tool.basedpyright]
+include = ["src"]
+pythonVersion = "3.12"
+# basedpyright's default standard. It reports 0 errors; the remaining
+# warnings are almost all `reportUnknown*` / `reportAny`, coming from the
+# untyped surfaces we sit on (PyAV, davey, nacl) and from structures that
+# still carry a bare `dict` or `Any`. Those are the annotation backlog rather
+# than defects, and they are visible on every run so they cannot quietly grow.
+typeCheckingMode = "recommended"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.40.2",
+    "ruff",
+]

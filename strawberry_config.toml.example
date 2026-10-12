@@ -3,9 +3,13 @@ token = "..."
 
 [voice]
 
-# Comment out the guild part if the channel is a dm channel.
-guild_id = "..."
+# If it is a private channel, do not use guild_id.
+# The internal code will figure out what guild it is from the channel
+# To avoid the overhead on next runs, you should just set it after first run.
+
+# guild_id = "..."
 channel_id = "..."
 
-# Optional
+# Optional: pin a voice region (e.g. "us-west").
+# Leave unset (or empty) to look up the region Discord marks optimal.
 preferred_region = ""

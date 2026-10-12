@@ -1,60 +1,72 @@
-import math
+"""AVC RTP (RFC 6184).
+
+The frame loop, the marker bit and the RTP plumbing are inherited from
+`AnnexBPacketizer`. Only the fragmenter is AVC's, and it is written out in
+full: the NAL header is one byte, the type is five bits, the indicator is
+`0x1C | fnri`, and the data starts one byte in.
+"""
+
 import typing
+from collections.abc import Iterator
 
-from strawberry.utils import partition_chunks
+from strawberry.codecs import VIDEO_CODECS, VideoCodec
 
-from .base_packetizer import BaseMediaPacketizer
+from .annexb import AnnexBPacketizer
 
 if typing.TYPE_CHECKING:
-    from strawberry.connection import UDPConnection
+    pass
 
 
-class H264Packetizer(BaseMediaPacketizer):
-    codec = "H264"
+class H264Packetizer(AnnexBPacketizer):
+    """AVC RTP (RFC 6184).
 
-    def __init__(self, conn: "UDPConnection"):
-        super().__init__(conn, 0x65, True)
+    VCL NAL units are always fragmented, even when they would fit: after
+    DAVE the slice body is ciphertext, so a single NAL packet would leave
+    a receiver nothing to parse. FU-A puts the type in a header we build
+    before encryption.
+    """
 
-        self.fps = 30
+    MEDIA = "video"
+    codec = VIDEO_CODECS["H264"].name
 
-    def send_frame(self, nalus: list[bytes]):
-        for i, nalu in enumerate(nalus):
-            is_last = i == len(nalus) - 1
+    #: FU-A, the AVC fragmentation unit indicator (RFC 6184 5.8)
+    FU_A_NAL_TYPE = 0x1C
 
-            if len(nalu) <= self.mtu:
-                self.conn.send_packet(
-                    self.conn.encrypt_data(
-                        self.get_rtp_header(is_last),
-                        self.get_header_extension() + nalu,
-                    )
-                )
+    def __init__(
+        self,
+        extensions_enabled: bool = True,
+        codec: "VideoCodec | None" = None,
+    ) -> None:
+        super().__init__(codec or VIDEO_CODECS["H264"], extensions_enabled=extensions_enabled)
 
+    def iter_fragments_from_nalu(self, nalu: bytes) -> "Iterator[tuple[bool, bytes]]":
+        """FU-A fragments, per RFC 6184 5.8.
+
+            +---------------+       +---------------+
+            |0|1|2|3|4|5|6|7|       |0|1|2|3|4|5|6|7|
+            +---------------+       +===============+
+            |F|NRI|  Type  |       |S|E|R|  Type  |
+            +---------------+       +---------------+
+
+        The indicator keeps F and NRI from the NAL header; the FU header
+        carries the original type with the start and end bits on top. Two
+        bytes of prefix, and the NAL header itself is dropped.
+        """
+        nal_header = nalu[0]
+        nalu_data = nalu[1:]
+        nal_type = nal_header & 0x1F
+        fnri = nal_header & 0xE0
+        default_header = bytes((self.FU_A_NAL_TYPE | fnri,))
+
+        fragments = self.split_to_mtu(nalu_data, len(default_header) + 1)
+        last = len(fragments) - 1
+        for index, nalu_fragment in enumerate(fragments):
+            chunk_header = default_header
+            is_final_chunk = index == last
+            if index == 0:
+                chunk_header += bytes((0x80 | nal_type,))
+            elif is_final_chunk:
+                chunk_header += bytes((0x40 | nal_type,))
             else:
-                nal0 = nalu[0]
-                chunks_count = math.ceil((len(nalu) - 1) / self.mtu)
-
-                nal_type = nal0 & 0x1F
-                fnri = nal0 & 0xE0
-
-                default_header = bytes((0x1C | fnri,))
-
-                for j, nal_fragment in enumerate(partition_chunks(nalu[1:], self.mtu)):
-                    chunk_header = default_header
-                    is_final_chunk = j == chunks_count - 1
-
-                    if j == 0:
-                        chunk_header += bytes((0x80 | nal_type,))
-                    else:
-                        if is_final_chunk:
-                            chunk_header += bytes((0x40 | nal_type,))
-                        else:
-                            chunk_header += bytes((nal_type,))
-
-                    self.conn.send_packet(
-                        self.conn.encrypt_data(
-                            self.get_rtp_header(is_final_chunk and is_last),
-                            self.get_header_extension() + chunk_header + nal_fragment,
-                        )
-                    )
-
-        self.increment_timestamp(90000 / self.fps)
+                chunk_header += bytes((nal_type,))
+            yield is_final_chunk, chunk_header + nalu_fragment
